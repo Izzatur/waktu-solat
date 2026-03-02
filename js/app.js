@@ -146,12 +146,59 @@ async function reverseGeocode(lat, lon) {
   );
 }
 
+// ── Cache (keyed by zone + Malaysia date UTC+8) ───────────────────────────────
+
+const MALAYSIA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000; // UTC+8 (Malaysia Standard Time)
+
+/**
+ * Returns today's date string in Malaysia Standard Time (UTC+8),
+ * e.g. "2026-03-02". Used as the cache key so the cache expires at
+ * Malaysian midnight, independent of the user's local timezone.
+ */
+function getMalaysiaDateString() {
+  const now = new Date();
+  const myTime = new Date(now.getTime() + MALAYSIA_UTC_OFFSET_MS);
+  return myTime.toISOString().slice(0, 10); // "YYYY-MM-DD"
+}
+
+function getCacheKey(zone) {
+  return `waktuSolat_cache_${zone}_${getMalaysiaDateString()}`;
+}
+
+function loadCache(zone) {
+  try {
+    const raw = localStorage.getItem(getCacheKey(zone));
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.warn("waktu-solat: failed to read cache", err);
+    return null;
+  }
+}
+
+function saveCache(zone, prayerData) {
+  try {
+    localStorage.setItem(getCacheKey(zone), JSON.stringify(prayerData));
+  } catch (err) {
+    console.warn("waktu-solat: failed to write cache", err);
+  }
+}
+
 // ── API Fetch ─────────────────────────────────────────────────────────────────
 
 async function fetchPrayerTimes(zone) {
   currentZone = zone;
-  showLoading(true);
   hideError();
+
+  // Serve from cache when available — prayer times only change day-to-day
+  const cached = loadCache(zone);
+  if (cached) {
+    todayPrayers = cached;
+    renderPrayerTimes(zone, todayPrayers);
+    startCountdown();
+    return;
+  }
+
+  showLoading(true);
 
   const apiUrl = `${API_BASE}?r=esolatApi/takwimsolat&period=today&zone=${zone}`;
 
@@ -178,6 +225,7 @@ async function fetchPrayerTimes(zone) {
   }
 
   todayPrayers = data.prayerTime[0];
+  saveCache(zone, todayPrayers);
   renderPrayerTimes(zone, todayPrayers);
   startCountdown();
 }
